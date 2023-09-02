@@ -13,8 +13,8 @@ import os
 parser = argparse.ArgumentParser()
 parser.add_argument("--data_path", type=str, required=True)
 parser.add_argument("--data_txt", type=str, required=True)
-parser.add_argument("--load_height", type=int, default=256)
-parser.add_argument("--load_width", type=int, default=192)
+parser.add_argument("--load_height", type=int, default=512)
+parser.add_argument("--load_width", type=int, default=384)
 parser.add_argument("--cloth_type", default=str, required=True)
 
 opt = parser.parse_args()
@@ -32,17 +32,20 @@ def get_img_agnostic(img, label, parse, pose_data):
     parse_head = (
         (label_array == 1).astype(np.float32)
         + (label_array == 2).astype(np.float32)
-        + (label_array == 11).astype(np.float32)
+        # + (label_array == 11).astype(np.float32)
         + (label_array == 3).astype(np.float32)
     )
     parse_upper = (
         (label_array == 4).astype(np.float32)
         + (label_array == 14).astype(np.float32)
         + (label_array == 15).astype(np.float32)
+        - (parse_array == 3).astype(np.float32)
+        - (parse_array == 4).astype(np.float32)
     )
     parse_lower = (
         (label_array == 5).astype(np.float32)
         + (label_array == 6).astype(np.float32)
+        + (label_array == 7).astype(np.float32)
         + (label_array == 8).astype(np.float32)
         + (label_array == 12).astype(np.float32)
         + (label_array == 13).astype(np.float32)
@@ -56,14 +59,14 @@ def get_img_agnostic(img, label, parse, pose_data):
 
     r = 10
     img = np.array(img)
-    if cloth_type == "upper":
+    if cloth_type == "upper_body" or cloth_type == "dresses":
         img[parse_upper > 0, :] = 0
-    elif cloth_type == "lower":
+
+    if cloth_type == "lower_body" or cloth_type == "dresses":
         img[parse_lower > 0, :] = 0
-    else:
-        img[parse_upper > 0 or parse_lower > 0, :] = 0
 
     img = Image.fromarray(img)
+
     agnostic = img.copy()
     agnostic_draw = ImageDraw.Draw(agnostic)
 
@@ -74,7 +77,7 @@ def get_img_agnostic(img, label, parse, pose_data):
     pose_data[8] = point + (pose_data[8] - point) / length_b * length_a
     pose_data[11] = point + (pose_data[11] - point) / length_b * length_a
 
-    if cloth_type == "upper" or cloth_type == "dress":
+    if cloth_type == "upper_body" or cloth_type == "dresses":
         # mask arms
         agnostic_draw.line([tuple(pose_data[i]) for i in [2, 5]], "black", width=r * 7)
 
@@ -148,20 +151,21 @@ def get_img_agnostic(img, label, parse, pose_data):
             "black",
         )
 
-    if cloth_type == "lower" or cloth_type == "dress":
+    if cloth_type == "lower_body" or cloth_type == "dresses":
+        if cloth_type == "dresses":
+            r = r * 2
+
         # mask legs
         agnostic_draw.line([tuple(pose_data[i]) for i in [8, 11]], "black", width=r * 5)
-        agnostic.show()
 
         for i in [9, 12]:
             # for i in [8, 9, 11, 12]:
             pointx, pointy = pose_data[i]
             agnostic_draw.ellipse(
-                (pointx - r * 4, pointy - r * 4, pointx + r * 4, pointy + r * 4),
+                (pointx - r * 2, pointy - r * 2, pointx + r * 2, pointy + r * 2),
                 "black",
                 "black",
             )
-        agnostic.show()
         for i in [9, 10, 12, 13]:
             if (pose_data[i - 1, 0] == 0.0 and pose_data[i - 1, 1] == 0.0) or (
                 pose_data[i, 0] == 0.0 and pose_data[i, 1] == 0.0
@@ -181,48 +185,51 @@ def get_img_agnostic(img, label, parse, pose_data):
                     "black",
                 )
 
-        if cloth_type == "upper":
-            agnostic.paste(img, None, Image.fromarray(np.uint8(parse_head * 255), "L"))
-            agnostic.paste(img, None, Image.fromarray(np.uint8(parse_lower * 255), "L"))
-            agnostic.paste(img, None, Image.fromarray(np.uint8(parse_hand * 255), "L"))
-        elif cloth_type == "lower":
-            agnostic.paste(img, None, Image.fromarray(np.uint8(parse_head * 255), "L"))
-            agnostic.paste(img, None, Image.fromarray(np.uint8(parse_upper * 255), "L"))
-            agnostic.paste(img, None, Image.fromarray(np.uint8(parse_hand * 255), "L"))
-        elif cloth_type == "dress":
-            agnostic.paste(img, None, Image.fromarray(np.uint8(parse_head * 255), "L"))
-            agnostic.paste(img, None, Image.fromarray(np.uint8(parse_hand * 255), "L"))
+    if cloth_type == "upper_body":
+        agnostic.paste(img, None, Image.fromarray(np.uint8(parse_head * 255), "L"))
+        agnostic.paste(img, None, Image.fromarray(np.uint8(parse_lower * 255), "L"))
+        agnostic.paste(img, None, Image.fromarray(np.uint8(parse_hand * 255), "L"))
+    elif cloth_type == "lower_body":
+        agnostic.paste(img, None, Image.fromarray(np.uint8(parse_head * 255), "L"))
+        agnostic.paste(img, None, Image.fromarray(np.uint8(parse_upper * 255), "L"))
+        agnostic.paste(img, None, Image.fromarray(np.uint8(parse_hand * 255), "L"))
+    elif cloth_type == "dresses":
+        agnostic.paste(img, None, Image.fromarray(np.uint8(parse_head * 255), "L"))
+        agnostic.paste(img, None, Image.fromarray(np.uint8(parse_hand * 255), "L"))
 
     return agnostic
 
 
 def process(img_name, save_dirname="img_agnostic"):
-    label = Image.open(f"./{data_path}/{cloth_type}/label_maps/{img_name}_4.png")
+    index = img_name.split("_")[0]
+
+    label = Image.open(f"{data_path}/{cloth_type}/label_maps/{index}_4.png")
     label = transforms.Resize(load_width, interpolation=0)(label)
 
-    parse = Image.open(f"./{data_path}/{cloth_type}/dense/{img_name}_5.png")
+    parse = Image.open(f"{data_path}/{cloth_type}/dense/{index}_5.png")
     parse = transforms.Resize(load_width, interpolation=0)(parse)
 
-    with open(f"./{data_path}/{cloth_type}/keypoints/{img_name}_2.json", "r") as f:
+    with open(f"{data_path}/{cloth_type}/keypoints/{index}_2.json", "r") as f:
         pose_label = json.load(f)
         pose_data = pose_label["keypoints"]
         pose_data = np.array(pose_data)
-        pose_data = pose_data[:, :2] / 2
+        pose_data = pose_data[:, :2]
 
-    img = Image.open(osp.join(data_path, "images", img_name))
+    img = Image.open(f"{data_path}/{cloth_type}/images/{index}_0.jpg")
+    img = transforms.Resize(load_width, interpolation=0)(img)
     img = get_img_agnostic(img, label, parse, pose_data)
     img = img.convert("RGB")
-    img.save(osp.join(data_path, save_dirname, img_name))
+    img.save(f"{data_path}/{cloth_type}/{save_dirname}/{index}" + "_agnostic.png")
 
 
 def main():
     img_names = []
-    os.makedirs(osp.join(data_path, "img_agnostic"), exist_ok=True)
+    os.makedirs(f"{data_path}/{cloth_type}/img_agnostic", exist_ok=True)
     with open(opt.data_txt, "r") as f:
         for line in tqdm.tqdm(f.readlines()):
-            img_name = line.strip()
+            img_name = osp.splitext(line.split()[0])[0]
             img_names.append(img_name)
-        process(img_name)
+            process(img_name)
 
 
 if __name__ == "__main__":
